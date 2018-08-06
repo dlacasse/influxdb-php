@@ -31,13 +31,19 @@ class UDP implements DriverInterface
     private $stream;
 
     /**
-     * @param string $host IP/hostname of the InfluxDB host
-     * @param int    $port Port of the InfluxDB process
+     * Constructor.
+     *
+     * @param string $host          IP/hostname of the InfluxDB host
+     * @param int    $port          Port of the InfluxDB process
+     * @param int    $chunkSize     Approximate size of UDP packets
+     * @param string $lineSeparator Character used as the line separator
      */
-    public function __construct($host, $port)
+    public function __construct($host, $port, $chunkSize = 60000, $lineSeparator = PHP_EOL)
     {
         $this->config['host'] = $host;
         $this->config['port'] = $port;
+        $this->config['chunkSize'] = $chunkSize;
+        $this->config['lineSeparator'] = $lineSeparator;
     }
 
     /**
@@ -74,8 +80,7 @@ class UDP implements DriverInterface
         if (isset($this->stream) === false) {
             $this->createStream();
         }
-
-        @stream_socket_sendto($this->stream, $data);
+        $this->chunkAndSendData($data);
 
         return true;
     }
@@ -93,10 +98,57 @@ class UDP implements DriverInterface
      */
     protected function createStream()
     {
-        $host = sprintf('udp://%s:%d', $this->config['host'], $this->config['port']);
-
         // stream the data using UDP and suppress any errors
-        $this->stream = @stream_socket_client($host);
+        $this->stream = @stream_socket_client($this->getAddressString());
     }
 
+   /***
+    * Using the host and port provided upon instantiation, generate the remote address string
+    *
+    * @return string
+    */
+    protected function getAddressString()
+    {
+        return sprintf('udp://%s:%d', $this->config['host'], $this->config['port']);
+    }
+
+    /**
+     * Since the UDP protocol supports a maximum payload size of ~64kb, we need to chunk up the requests for larger
+     * payloads. Since the payloads are line-delimted, we need to ensure that we don't split up an individual lines
+     *
+     * @param string $data
+     *
+     * @return void
+     */
+    protected function chunkAndSendData($data)
+    {
+        while(strlen($data) > 0)
+        {
+            $currentChunk = $data;
+
+            if (strlen($data) > $this->config['chunkSize'])
+            {
+                $endOfChunk = strpos($data, $this->config['lineSeparator'], $this->config['chunkSize']);
+
+                if ($endOfChunk) {
+                    $currentChunk = substr($data, 0, $endOfChunk);
+                }
+            }
+            $this->send($currentChunk);
+
+            $data = substr($data, strlen($currentChunk) + 1);
+        }
+    }
+
+  /**
+   * Send the data to the stream
+   *
+   * @param $data
+   *
+   * @return void
+   */
+  protected function send($data)
+  {
+      @stream_socket_sendto($this->stream, $data);
+  }
 }

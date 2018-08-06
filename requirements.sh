@@ -1,7 +1,5 @@
 #!/bin/bash
 
-#!/bin/bash
-
 GLEXEC=$(which ansible-galaxy)
 
 if [ $? = 1 ]; then
